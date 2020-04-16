@@ -37,15 +37,14 @@ char *extend_buffer(uint64_t *buffer_length, char *buffer) {
 
 const char *fetch_cookies(const char *cookies_file_name) {
   FILE *cookies_file = fopen(cookies_file_name, "r");
-  if (!cookies_file) {
+  if(!cookies_file) {
     fatal("Nie udało się otworzyć podanego pliku %s", cookies_file_name);
   }
 
-  size_t buffer_size = 32;
+  size_t buffer_size = 1024;
   size_t current_length = 0;
   char *result = malloc(buffer_size * sizeof(char));
-  memset(result, 0, buffer_size);
-  if (!result) {
+  if(!result) {
     fatal("Nie udało się alokować pamięci na ciasteczka");
   }
 
@@ -53,94 +52,49 @@ const char *fetch_cookies(const char *cookies_file_name) {
   size_t len = 0;
   ssize_t read;
   while ((read = getline(&line, &len, cookies_file)) != -1) {
-    for (size_t i = 0; i < read; i++) {
-      if (line[i] == '\n') {
+//    printf("Retrieved line of length %zu:\n", read);
+//    printf("%s\n", line);
+    for(size_t i=0; i<len; i++) {
+      if(line[i] == '\n') {
         break;
       }
 
-      if (current_length + 1 >= buffer_size) {
-        if ((result = extend_buffer(&buffer_size, result)) == NULL) {
+      if(current_length + 1 >= buffer_size) {
+        if(extend_buffer(&buffer_size, result) == NULL ) {
           fatal("Nie udało się alokować pamięci na ciasteczka");
         }
       }
       result[current_length++] = line[i];
     }
 
-    if (current_length + 2 >= buffer_size) {
-      if ((result = extend_buffer(&buffer_size, result)) == NULL) {
+    if(current_length + 2 >= buffer_size) {
+      if(extend_buffer(&buffer_size, result) == NULL ) {
         fatal("Nie udało się alokować pamięci na ciasteczka");
       }
     }
     result[current_length++] = ';';
     result[current_length++] = ' ';
+//    printf("partial cookies: %s, length: %d\n", result, current_length);
   }
   free(line);
 
-  if (current_length != 0) {
-    result[current_length - 2] = '\0';
+  if(current_length != 0) {
+    result[current_length-2] = '\0';
   }
 
-  fclose(cookies_file);
+//  printf("cookies: %s\n", result);
 
   return result;
 
 }
 
-char *create_get(const char *host, const char *address, const char *cookies) {
+char *create_get(const char *host, const char *address, const char* cookies) {
   char *result = NULL;
-  asprintf(&result, "%s %s %s\n%s %s\n%s %s\n%s\n\n", GET_STRING, address, HTTP_STRING, HOST_STRING, host,
-           COOKIE_STRING, cookies, CONNECTION_CLOSE_STRING);
+  asprintf(&result, "%s %s %s\n%s %s\n%s %s\n%s\n\n", GET_STRING, address, HTTP_STRING, HOST_STRING, host, COOKIE_STRING, cookies, CONNECTION_CLOSE_STRING);
   return result;
 }
 
-const char *get_response(int sock) {
-
-  char *response_buffer = malloc(BUFFER_SIZE * sizeof(char));
-  if (!response_buffer) {
-    fatal("Nie udało się alokować pamięci na bufor odpowiedzi");
-  }
-  int32_t response_buffer_length;
-
-  size_t response_length = 1024;
-  size_t current_length = 0;
-  char *response = malloc(response_length * sizeof(char));
-
-  while(1){
-    if((response_buffer_length = read(sock, response_buffer, BUFFER_SIZE)) > 0) {
-      for(size_t i=0; i<response_buffer_length; i++) {
-        if (current_length + 1 >= response_length) {
-          if ((response = extend_buffer(&response_length, response)) == NULL) {
-            fatal("Nie udało się alokować pamięci na ciasteczka");
-          }
-        }
-        response[current_length++] = response_buffer[i];
-      }
-
-    }
-    else if(response_buffer_length == 0) {
-      break;
-    }
-    else {
-      syserr("reading stream socket");
-    }
-  }
-
-  response[current_length] = '\0';
-  free(response_buffer);
-  return response;
-}
-
-const char *check_status(const char *header) {
-  char *first_space = strchr(header, ' ');
-  if(strncmp(first_space+1, "200 OK", 6) != 0) {
-    char *first_newline = strchr(header, '\n');
-    *first_newline = '\0';
-    return header;
-  }
-  return NULL;
-}
-
-int main(int argc, char *argv[]) {
+int main (int argc, char *argv[]) {
   int rc;
   int sock;
   struct addrinfo addr_hints, *addr_result;
@@ -170,7 +124,7 @@ int main(int argc, char *argv[]) {
   addr_hints.ai_socktype = SOCK_STREAM;
   addr_hints.ai_protocol = IPPROTO_TCP;
 
-  rc = getaddrinfo(host_address, port, &addr_hints, &addr_result);
+  rc =  getaddrinfo(host_address, port, &addr_hints, &addr_result);
   if (rc != 0) {
     fprintf(stderr, "rc=%d\n", rc);
     syserr("getaddrinfo: %s", gai_strerror(rc));
@@ -185,40 +139,26 @@ int main(int argc, char *argv[]) {
   line = create_get(host_address, test_address, cookies_string);
   size_t length = strlen(line);
 
-  printf("REQUEST:\n%s", line);
-
-  if (write(sock, line, length) < 0) {
+  printf("%s", line);
+  if (write(sock, line, length) < 0){
     syserr("writing on stream socket");
   }
-  const char *response_text = get_response(sock);
+
+  char *response = malloc(BUFFER_SIZE * sizeof(char));
+  memset(response, 0, BUFFER_SIZE);
+
+  if(read(sock, response, BUFFER_SIZE) < 0) {
+    syserr("reading stream socket");
+  }
+
+  printf("%s", response);
+
   if (close(sock) < 0)
     syserr("closing stream socket");
 
-  char *data = strstr( response_text, "\r\n\r\n" );
-  const char *header_text = response_text;
-  const char *data_text = "";
-  if ( data != NULL )
-  {
-    data_text = data+4;
-    *data = '\0';
-  }
-
-  if(check_status(header_text) != NULL) {
-    printf("%s", check_status(header_text));
-    free((char *)response_text);
-    free(line);
-    free((char *) cookies_string);
-    return 0;
-  }
-//  fetch_cookies_header(header_text);
-
-  printf("RESPONSE HEADER\n%s\nRESPONSE HEADER END\n", header_text);
-  printf("RESPONSE DATA\n%s\nRESPONSE DATA END\n", data_text);
-
-
-  free((char *)response_text);
+  free(response);
   free(line);
-  free((char *) cookies_string);
+  free((char *)cookies_string);
   return 0;
 }
 
