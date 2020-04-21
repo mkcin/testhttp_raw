@@ -4,6 +4,7 @@
  linie tekstu i wysyłał je do serwera.  Wpisanie BYE kończy pracę.
 */
 #define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -13,9 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <assert.h>
 #include "err.h"
 
-#define BUFFER_SIZE      4096
 
 static const char bye_string[] = "BYE";
 const char *GET_STRING = "GET";
@@ -86,106 +88,120 @@ const char *fetch_cookies_file(const char *cookies_file_name) {
 
 }
 
-const char *fetch_cookies_header(const char *header) {
-  const char *next_cookie;
-  size_t response_length = 1024;
-  size_t current_length = 0;
-  char *response_cookies = malloc(response_length * sizeof(char));
-  if(!response_cookies) {
-    fatal("Nie udało się alokować pamięci na ciasteczka");
+char *fetch_host(const char *address) {
+  char *host_begin;
+  if((host_begin = strstr(address, "https://")) != NULL) {
+    host_begin += 8;
   }
-
-  while((next_cookie = strstr(header, "Set-Cookie: ")) != NULL) {
-    next_cookie += 12;
-    const char *next_semicolon = strchr(next_cookie, ';');
-    const char *next_newline = strchr(next_cookie, '\n');
-    const char *cookie_end;
-    if(next_semicolon && next_semicolon < next_newline) {
-      cookie_end = next_semicolon;
-    }
-    else {
-      cookie_end = next_newline;
-    }
-    header = cookie_end+1;
-
-    while(next_cookie != cookie_end) {
-      if (current_length + 1 >= response_length) {
-        if ((response_cookies = extend_buffer(&response_length, response_cookies)) == NULL) {
-          fatal("Nie udało się alokować pamięci na odpowiedz");
-        }
-      }
-      response_cookies[current_length++] = *next_cookie;
-      next_cookie++;
-    }
-
-    if (current_length + 1 >= response_length) {
-      if ((response_cookies = extend_buffer(&response_length, response_cookies)) == NULL) {
-        fatal("Nie udało się alokować pamięci na odpowiedz");
-      }
-    }
-    response_cookies[current_length++] = '\n';
+  else if ((host_begin = strstr(address, "http://")) != NULL) {
+    host_begin += 7;
   }
-
-  if (current_length + 1 >= response_length) {
-    if ((response_cookies = extend_buffer(&response_length, response_cookies)) == NULL) {
-      fatal("Nie udało się alokować pamięci na odpowiedz");
-    }
+  else {
+    fatal("niepoprawny testowany adres");
   }
-  response_cookies[current_length++] = '\0';
-  return response_cookies;
+  char *host_end;
+  size_t host_length = strlen(host_begin);
+  if((host_end = strchr(host_begin, '/')) != NULL) {
+    host_length = host_end - host_begin;
+  }
+  char *host = malloc(strlen(address) * sizeof(char));
+  strcpy(host, host_begin);
+  if(host_end) {
+    host[host_length] = '\0';
+  }
+  return host;
 }
 
-char *create_get(const char *host, const char *address, const char *cookies) {
-  char *result = NULL;
-  asprintf(&result, "%s %s %s\n%s %s\n%s %s\n%s\n\n", GET_STRING, address, HTTP_STRING, HOST_STRING, host,
+char *create_get(const char *address, const char *cookies) {
+  char *host = fetch_host(address);
+  size_t request_length = 10 + strlen(GET_STRING) + strlen(address) + strlen(HTTP_STRING) + strlen(HOST_STRING) + strlen(host) + strlen(COOKIE_STRING) + strlen(cookies) + strlen(CONNECTION_CLOSE_STRING);
+  char *result = malloc(request_length * sizeof(char));
+  sprintf(result, "%s %s %s\n%s %s\n%s %s\n%s\n\n", GET_STRING, address, HTTP_STRING, HOST_STRING, host,
            COOKIE_STRING, cookies, CONNECTION_CLOSE_STRING);
+  free(host);
   return result;
 }
 
-const char *get_response(int sock) {
 
-  char *response_buffer = malloc(BUFFER_SIZE * sizeof(char));
-  if (!response_buffer) {
-    fatal("Nie udało się alokować pamięci na bufor odpowiedzi");
+char *read_line(FILE *file, size_t *line_length) {
+  char *line = NULL;
+  size_t buffer_length = 0;
+  if((*line_length = getline(&line, &buffer_length, file)) == -1) {
+    free(line);
+    return NULL;
   }
-  int32_t response_buffer_length;
-
-  size_t response_length = 1024;
-  size_t current_length = 0;
-  char *response = malloc(response_length * sizeof(char));
-
-  while(1){
-    if((response_buffer_length = read(sock, response_buffer, BUFFER_SIZE)) > 0) {
-      for(size_t i=0; i<response_buffer_length; i++) {
-        if (current_length + 1 >= response_length) {
-          if ((response = extend_buffer(&response_length, response)) == NULL) {
-            fatal("Nie udało się alokować pamięci na odpowiedz");
-          }
-        }
-        response[current_length++] = response_buffer[i];
-      }
-
-    }
-    else if(response_buffer_length == 0) {
-      break;
-    }
-    else {
-      syserr("reading stream socket");
-    }
-  }
-
-  response[current_length] = '\0';
-  free(response_buffer);
-  return response;
+  return line;
 }
 
-const char *check_status(const char *header) {
-  char *first_space = strchr(header, ' ');
-  if(strncmp(first_space+1, "200 OK", 6) != 0) {
-    char *first_newline = strchr(header, '\r');
-    *first_newline = '\0';
-    return header;
+char *fetch_response_cookies_and_length(int socket) {
+  FILE *response = NULL;
+  if ((response = fdopen(socket, "r")) == NULL) {
+    syserr("fdopen");
   }
+
+  size_t response_status_length = 0;
+  char *response_status = NULL;
+  if((response_status = read_line(response, &response_status_length)) == NULL) {
+    syserr("niepoprawna odpowiedź serwera");
+  }
+  if(strcmp(response_status, "HTTP/1.1 200 OK\r\n") != 0) {
+    fclose(response);
+    return response_status;
+  }
+  free(response_status);
+
+  char *response_header_line = NULL;
+  size_t response_header_line_length = 0;
+  bool chunked = false;
+  while((response_header_line = read_line(response, &response_header_line_length)) != NULL) {
+//    printf("%s", response_header_line);
+    if(strncmp(response_header_line, "Set-Cookie: ", 12) == 0) {
+      char *cookie_end;
+      if((cookie_end = strchr(response_header_line + 13, ';')) != NULL) {
+        *cookie_end = '\0';
+        printf("%s\n", response_header_line);
+      }
+      else if((cookie_end = strchr(response_header_line + 13, '\r')) != NULL) {
+        *cookie_end = '\0';
+        printf("%s\n", response_header_line);
+      }
+      else if((cookie_end = strchr(response_header_line + 13, ' ')) != NULL) {
+        *cookie_end = '\0';
+        printf("%s\n", response_header_line);
+      }
+    }
+    if(strcmp(response_header_line, "Transfer-Encoding: chunked\r\n") == 0) {
+      chunked = true;
+    }
+    if(strcmp(response_header_line, "\r\n") == 0) {
+      free(response_header_line);
+      break;
+    }
+
+    free(response_header_line);
+  }
+
+  char *response_body_line = NULL;
+  size_t response_body_line_length = 0;
+  size_t response_length = 0;
+  while((response_body_line = read_line(response, &response_body_line_length)) != NULL) {
+//    printf("%s", response_body_line);
+    if(chunked) {
+      size_t chunk_size = strtol(response_body_line, NULL, 16);
+      response_length += chunk_size;
+      char *chunk = malloc(chunk_size * sizeof(char));
+      fread(chunk, sizeof(char), chunk_size+2, response);
+      free(chunk);
+    }
+    else {
+      response_length += response_body_line_length;
+    }
+
+    free(response_body_line);
+  }
+
+  printf("%zu", response_length);
+
   return NULL;
 }
 
@@ -230,45 +246,25 @@ int main(int argc, char *argv[]) {
   freeaddrinfo(addr_result);
 
 
-  char *request = create_get(host_address, test_address, cookies_string);
+  char *request = create_get(test_address, cookies_string);
+  printf("%s", request);
   size_t length = strlen(request);
-
-//  printf("REQUEST:\n%s", request);
 
   if (write(sock, request, length) < 0) {
     syserr("writing on stream socket");
   }
-  const char *response_text = get_response(sock);
-  if (close(sock) < 0)
+
+  char *wrong_status;
+  if((wrong_status = fetch_response_cookies_and_length(sock)) != NULL) {
+    printf("%s", wrong_status);
+    free(wrong_status);
+  }
+
+
+  if (close(sock) < 0) {
     syserr("closing stream socket");
-
-  char *data = strstr( response_text, "\r\n\r\n" );
-  const char *header_text = response_text;
-  const char *data_text = "";
-  if ( data != NULL )
-  {
-    data_text = data+4;
-    *(data+2) = '\0';
   }
 
-  const char *status;
-  if((status = check_status(header_text)) != NULL) {
-    printf("%s", status);
-    free((char *)response_text);
-    free(request);
-    free((char *) cookies_string);
-    return 0;
-  }
-  size_t data_length = strlen(header_text);
-  const char *fetched_cookies = fetch_cookies_header(header_text);
-
-  printf("%s", fetched_cookies);
-  printf("%zu", data_length);
-//  printf("RESPONSE HEADER\n%s\nRESPONSE HEADER END\n", header_text);
-//  printf("RESPONSE DATA\n%s\nRESPONSE DATA END\n", data_text);
-
-
-  free((char *)response_text);
   free(request);
   free((char *) cookies_string);
   return 0;
