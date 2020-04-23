@@ -18,12 +18,8 @@ else
   exit 1;
 fi
 
-echo -ne "base_address: $base_address\nis secure: $is_secure\n"
-
 [[ $2 =~ (://)(.*)? ]]
 full_address=${BASH_REMATCH[2]};
-
-echo -ne "full address: $full_address\n"
 
 if [[ $base_address =~ (.*):([0-9]+) ]];
 then
@@ -32,7 +28,7 @@ then
 elif [[ $base_address =~ ^([^:]+)$ ]];
 then
   address=$base_address;
-  if $is_secure -eq 1
+  if [ $is_secure -eq 1 ]
   then
     port=443;
   else
@@ -44,3 +40,24 @@ else
 fi
 
 echo -en "SUMMARY\nfull address: $full_address\nis secure: $is_secure\naddress: $address\nport: $port\n"
+
+#echo -e "pid=\nforeground=yes\n[service]\nclient = yes\naccept = $addressp:$portp\nconnect = $address" | stunnel -fd 0 &> .stdata.$$ & export STPID=$!
+#addressp="127.0.0.1"
+#    portp="3333"
+#./testhttp_raw $addressp:$portp "$1" "$2"
+
+if [ $is_secure -eq 0 ];
+then
+  ./testhttp_raw "$address":"$port" "$1" "$2"
+else
+  local_address="127.0.0.1";
+  local_port="3333";
+  config="pid=\nforeground=yes\n[service]\nclient = yes\naccept = $local_address:$local_port\nconnect = $address:$port";
+  echo -e "$config" | stunnel -fd 0 &> .stdata.$$ & export STPID=$!;
+  STNETSTAT=$(netstat -ntpl 2> /dev/null)
+  while [[ ! "$STNETSTAT" =~ $local_address:$local_port ]];
+  do
+    STNETSTAT=$(netstat -ntpl 2> /dev/null);
+  done
+  ./testhttp_raw $local_address:$local_port "$1" "$2";
+fi
