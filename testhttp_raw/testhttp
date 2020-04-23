@@ -1,0 +1,46 @@
+#!/bin/bash
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: ./testhttp <cookies file> <tested http address>";
+fi
+
+
+if [[ $2 =~ ^(https://)([^/]*)(/.*)? ]];
+then
+  base_address=${BASH_REMATCH[2]};
+  is_secure=1;
+elif [[ $2 =~ ^(http://)([^/]*)(/.*)? ]];
+then
+  base_address=${BASH_REMATCH[2]};
+  is_secure=0;
+else
+  echo "invalid http address";
+  exit 1;
+fi
+
+echo -ne "base_address: $base_address\nis secure: $is_secure\n"
+
+[[ $2 =~ (://)(.*)? ]]
+full_address=${BASH_REMATCH[2]};
+
+echo -ne "full address: $full_address\n"
+
+if [[ $base_address =~ (.*):([0-9]+) ]];
+then
+  address=${BASH_REMATCH[1]};
+  port=${BASH_REMATCH[2]};
+elif [[ $base_address =~ ^([^:]+)$ ]];
+then
+  address=$base_address;
+  if $is_secure -eq 1
+  then
+    port=443;
+  else
+    port=80;
+  fi
+else
+  echo "invalid http address";
+  exit 1;
+fi
+
+echo -en "SUMMARY\nfull address: $full_address\nis secure: $is_secure\naddress: $address\nport: $port\n"

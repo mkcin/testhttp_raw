@@ -3,8 +3,6 @@
  Program spróbuje połączyć się z serwerem, po czym będzie od nas pobierał
  linie tekstu i wysyłał je do serwera.  Wpisanie BYE kończy pracę.
 */
-#define _GNU_SOURCE
-#define _POSIX_C_SOURCE 200809L
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -15,7 +13,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <assert.h>
 #include "err.h"
 
 
@@ -40,16 +37,16 @@ char *extend_buffer(uint64_t *buffer_length, char *buffer) {
 const char *fetch_cookies_file(const char *cookies_file_name) {
   FILE *cookies_file = fopen(cookies_file_name, "r");
   if (!cookies_file) {
-    fatal("Nie udało się otworzyć podanego pliku %s", cookies_file_name);
+    fatal("Unable to open the file %s", cookies_file_name);
   }
 
   size_t buffer_size = 32;
   size_t current_length = 0;
   char *result = malloc(buffer_size * sizeof(char));
-  memset(result, 0, buffer_size);
   if (!result) {
-    fatal("Nie udało się alokować pamięci na ciasteczka");
+    fatal("Couldn't allocate memory for the cookies");
   }
+  memset(result, 0, buffer_size);
 
   char *line = NULL;
   size_t len = 0;
@@ -62,7 +59,7 @@ const char *fetch_cookies_file(const char *cookies_file_name) {
 
       if (current_length + 1 >= buffer_size) {
         if ((result = extend_buffer(&buffer_size, result)) == NULL) {
-          fatal("Nie udało się alokować pamięci na ciasteczka");
+          fatal("Couldn't allocate memory for the cookies");
         }
       }
       result[current_length++] = line[i];
@@ -70,7 +67,7 @@ const char *fetch_cookies_file(const char *cookies_file_name) {
 
     if (current_length + 2 >= buffer_size) {
       if ((result = extend_buffer(&buffer_size, result)) == NULL) {
-        fatal("Nie udało się alokować pamięci na ciasteczka");
+        fatal("Couldn't allocate memory for the cookies");
       }
     }
     result[current_length++] = ';';
@@ -97,7 +94,7 @@ char *fetch_host(const char *address) {
     host_begin += 7;
   }
   else {
-    fatal("niepoprawny testowany adres");
+    fatal("Invalid address");
   }
   char *host_end;
   size_t host_length = strlen(host_begin);
@@ -105,6 +102,9 @@ char *fetch_host(const char *address) {
     host_length = host_end - host_begin;
   }
   char *host = malloc(strlen(address) * sizeof(char));
+  if(!host) {
+    fatal("couldn't allocate memory");
+  }
   strcpy(host, host_begin);
   if(host_end) {
     host[host_length] = '\0';
@@ -116,6 +116,9 @@ char *create_get(const char *address, const char *cookies) {
   char *host = fetch_host(address);
   size_t request_length = 10 + strlen(GET_STRING) + strlen(address) + strlen(HTTP_STRING) + strlen(HOST_STRING) + strlen(host) + strlen(COOKIE_STRING) + strlen(cookies) + strlen(CONNECTION_CLOSE_STRING);
   char *result = malloc(request_length * sizeof(char));
+  if(!result) {
+    fatal("couldn't allocate memory");
+  }
   sprintf(result, "%s %s %s\n%s %s\n%s %s\n%s\n\n", GET_STRING, address, HTTP_STRING, HOST_STRING, host,
            COOKIE_STRING, cookies, CONNECTION_CLOSE_STRING);
   free(host);
@@ -142,10 +145,15 @@ char *fetch_response_cookies_and_length(int socket) {
   size_t response_status_length = 0;
   char *response_status = NULL;
   if((response_status = read_line(response, &response_status_length)) == NULL) {
-    syserr("niepoprawna odpowiedź serwera");
+    syserr("Invalid server response");
   }
   if(strcmp(response_status, "HTTP/1.1 200 OK\r\n") != 0) {
     fclose(response);
+    char *end = strstr(response_status, "\r\n");
+    if(end) {
+      *(end+1) = '\0';
+      *end = '\n';
+    }
     return response_status;
   }
   free(response_status);
@@ -154,20 +162,19 @@ char *fetch_response_cookies_and_length(int socket) {
   size_t response_header_line_length = 0;
   bool chunked = false;
   while((response_header_line = read_line(response, &response_header_line_length)) != NULL) {
-//    printf("%s", response_header_line);
     if(strncmp(response_header_line, "Set-Cookie: ", 12) == 0) {
       char *cookie_end;
       if((cookie_end = strchr(response_header_line + 13, ';')) != NULL) {
         *cookie_end = '\0';
-        printf("%s\n", response_header_line);
+        printf("%s\n", response_header_line + 12);
       }
       else if((cookie_end = strchr(response_header_line + 13, '\r')) != NULL) {
         *cookie_end = '\0';
-        printf("%s\n", response_header_line);
+        printf("%s\n", response_header_line + 12);
       }
       else if((cookie_end = strchr(response_header_line + 13, ' ')) != NULL) {
         *cookie_end = '\0';
-        printf("%s\n", response_header_line);
+        printf("%s\n", response_header_line + 12);
       }
     }
     if(strcmp(response_header_line, "Transfer-Encoding: chunked\r\n") == 0) {
@@ -185,11 +192,13 @@ char *fetch_response_cookies_and_length(int socket) {
   size_t response_body_line_length = 0;
   size_t response_length = 0;
   while((response_body_line = read_line(response, &response_body_line_length)) != NULL) {
-//    printf("%s", response_body_line);
     if(chunked) {
       size_t chunk_size = strtol(response_body_line, NULL, 16);
       response_length += chunk_size;
-      char *chunk = malloc(chunk_size * sizeof(char));
+      char *chunk = malloc((chunk_size + 2) * sizeof(char));
+      if(!chunk) {
+        fatal("couldn't allocate memory");
+      }
       fread(chunk, sizeof(char), chunk_size+2, response);
       free(chunk);
     }
@@ -200,7 +209,9 @@ char *fetch_response_cookies_and_length(int socket) {
     free(response_body_line);
   }
 
-  printf("%zu", response_length);
+  printf("Dlugosc zasobu: %zu\n", response_length);
+
+  fclose(response);
 
   return NULL;
 }
@@ -210,7 +221,6 @@ int main(int argc, char *argv[]) {
   int sock;
   struct addrinfo addr_hints, *addr_result;
 
-  /* Kontrola dokumentów ... */
   if (argc != 4) {
     fatal("Użycie: %s <adres połączenia>:<port> <plik ciasteczek> <testowany adres http>", argv[0]);
   }
@@ -219,6 +229,9 @@ int main(int argc, char *argv[]) {
   const char *test_address = argv[3];
   const char *host_address = argv[1];
   char *semicolon = strrchr(host_address, ':');
+  if(!semicolon) {
+    fatal("invalid first argument format");
+  }
   char *port = semicolon + 1;
   *semicolon = '\0';
 
@@ -227,7 +240,6 @@ int main(int argc, char *argv[]) {
     syserr("socket");
   }
 
-  /* Trzeba się dowiedzieć o adres internetowy serwera. */
   memset(&addr_hints, 0, sizeof(struct addrinfo));
   addr_hints.ai_flags = 0;
   addr_hints.ai_family = AF_INET;
@@ -236,8 +248,7 @@ int main(int argc, char *argv[]) {
 
   rc = getaddrinfo(host_address, port, &addr_hints, &addr_result);
   if (rc != 0) {
-    fprintf(stderr, "rc=%d\n", rc);
-    syserr("getaddrinfo: %s", gai_strerror(rc));
+    syserr("getaddrinfo: %s; rc=%d", gai_strerror(rc), rc);
   }
 
   if (connect(sock, addr_result->ai_addr, addr_result->ai_addrlen) != 0) {
@@ -247,7 +258,6 @@ int main(int argc, char *argv[]) {
 
 
   char *request = create_get(test_address, cookies_string);
-  printf("%s", request);
   size_t length = strlen(request);
 
   if (write(sock, request, length) < 0) {
@@ -258,11 +268,6 @@ int main(int argc, char *argv[]) {
   if((wrong_status = fetch_response_cookies_and_length(sock)) != NULL) {
     printf("%s", wrong_status);
     free(wrong_status);
-  }
-
-
-  if (close(sock) < 0) {
-    syserr("closing stream socket");
   }
 
   free(request);
