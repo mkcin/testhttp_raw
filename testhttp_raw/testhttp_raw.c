@@ -1,9 +1,3 @@
-/*
- Program uruchamiamy z dwoma parametrami: nazwa serwera i numer jego portu.
- Program spróbuje połączyć się z serwerem, po czym będzie od nas pobierał
- linie tekstu i wysyłał je do serwera.  Wpisanie BYE kończy pracę.
-*/
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -16,13 +10,18 @@
 #include "err.h"
 
 
-static const char bye_string[] = "BYE";
 const char *GET_STRING = "GET";
 const char *HTTP_STRING = "HTTP/1.1";
 const char *HOST_STRING = "Host:";
 const char *COOKIE_STRING = "Cookie:";
 const char *CONNECTION_CLOSE_STRING = "Connection: Close";
 
+// Funkcja rozszerzająca bufor na linię wejścia
+// Przyjmuje:
+// [line_length] - wskaźniek na obecną długość linii (długość jest modyfikowana przez funkcję)
+// [line] - wskaźnik na linię
+// Zwraca:
+// wskaźnik na poszerzony bufor
 char *extend_buffer(uint64_t *buffer_length, char *buffer) {
   *buffer_length *= 2;
   char *tmp = realloc(buffer, *buffer_length * sizeof(char));
@@ -34,6 +33,12 @@ char *extend_buffer(uint64_t *buffer_length, char *buffer) {
   }
 }
 
+// Funkcja wyciąga cookies z pliku.
+// fetch_cookies_file otwiera plik ze ścieżki podanej w argumencie, alokuje pamięć na linijkę ciasteczek
+// i dodaje je z kolejnych linijek pliku.
+// Jeśli nie udało się zaalokować pamięci na linię, przerywa program z odpowiednim komentarzem wypisywanym na strumień
+// błędu.
+// Zwraca wskaźnik na linijkę z ciasteczkami.
 const char *fetch_cookies_file(const char *cookies_file_name) {
   FILE *cookies_file = fopen(cookies_file_name, "r");
   if (!cookies_file) {
@@ -85,6 +90,11 @@ const char *fetch_cookies_file(const char *cookies_file_name) {
 
 }
 
+// Funkcja wyciąga host z podanego adresu.
+// fetch_host alokuje pamięć na hosta i przepisuje go na podstawie adresu podanego w argumencie.
+// Jeśli nie udało się zaalokować pamięci, przerywa program z odpowiednim komentarzem wypisywanym na strumień
+// błędu.
+// Zwraca wskaźnik na linijkę z hostem.
 char *fetch_host(const char *address) {
   char *host_begin;
   if((host_begin = strstr(address, "https://")) != NULL) {
@@ -112,6 +122,11 @@ char *fetch_host(const char *address) {
   return host;
 }
 
+// Funkcja konstruuje zapytanie GET
+// create_get alokuje pamięć na zapytanie GET, konstruuje je z podanego adresu i wskaźnika na napis z ciasteczkami.
+// Jeśli nie udało się zaalokować pamięci, przerywa program z odpowiednim komentarzem wypisywanym na strumień
+// błędu.
+// Jeśli nie udało się zaalokować pamięci na zapytanie.
 char *create_get(const char *address, const char *cookies) {
   char *host = fetch_host(address);
   size_t request_length = 10 + strlen(GET_STRING) + strlen(address) + strlen(HTTP_STRING) + strlen(HOST_STRING) + strlen(host) + strlen(COOKIE_STRING) + strlen(cookies) + strlen(CONNECTION_CLOSE_STRING);
@@ -125,7 +140,10 @@ char *create_get(const char *address, const char *cookies) {
   return result;
 }
 
-
+// Funkcja czytająca linię pliku.
+// read_line rezerwuje pamięć na linijkę zczytaną z pliku, zwraca tę linijkę oraz ustawia jej długość
+// pod wskaźnikiem przekazanym jako argument.
+// Zwraca wskaźnik na linijkę lub NULL, jeśli nie udało się zaalokować pamięci.
 char *read_line(FILE *file, size_t *line_length) {
   char *line = NULL;
   size_t buffer_length = 0;
@@ -136,16 +154,24 @@ char *read_line(FILE *file, size_t *line_length) {
   return line;
 }
 
+
+// Funkcja parsująca odpowiedź serwera
+// fetch_response_cookies_and_length sprawdza czy odpowiedź serwera ma status 200 OK
+// Jeśli tak, wypisuje na standardowe wyjście ciasteczka z nagłówka odpowiedzi oraz
+// rzeczywistą długość zasobu zwróconą przez serwer. Następnie zwraca NULL.
+// Jeśli nie, nie wypisuje nic i zwraca linijkę ze statusem odpowiedzi.
+// Jeśli nie udało się zaalokować pamięci, przerywa program z odpowiednim komentarzem wypisywanym na strumień
+// błędu.
 char *fetch_response_cookies_and_length(int socket) {
   FILE *response = NULL;
   if ((response = fdopen(socket, "r")) == NULL) {
-    syserr("fdopen");
+    fatal("fdopen");
   }
 
   size_t response_status_length = 0;
   char *response_status = NULL;
   if((response_status = read_line(response, &response_status_length)) == NULL) {
-    syserr("Invalid server response");
+    fatal("Invalid server response");
   }
   if(strcmp(response_status, "HTTP/1.1 200 OK\r\n") != 0) {
     fclose(response);
@@ -216,6 +242,12 @@ char *fetch_response_cookies_and_length(int socket) {
   return NULL;
 }
 
+// Główna funkcja programmu.
+// Funkcja nawiązuje połączenie z podanym w argv[1] adresem,
+// pobiera ciasteczka z podanego w argv[2] pliku,
+// wykonuje zapytanie GET o adres podany w argv[3].
+// Jeśli nie udało się zaalokować pamięci, wystąpił błąd z połączeniem lub któryś z argumentów jest niepoprawny,
+// przerywa program z odpowiednim komentarzem wypisywanym na strumień błędu.
 int main(int argc, char *argv[]) {
   int rc;
   int sock;

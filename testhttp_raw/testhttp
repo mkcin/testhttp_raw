@@ -1,9 +1,8 @@
 #!/bin/bash
 
 if [ "$#" -ne 2 ]; then
-    echo "usage: ./testhttp <cookies file> <tested http address>";
+    >&2 echo "ERROR: usage: ./testhttp <cookies file> <tested http address>";
 fi
-
 
 if [[ $2 =~ ^(https://)([^/]*)(/.*)? ]];
 then
@@ -14,7 +13,7 @@ then
   base_address=${BASH_REMATCH[2]};
   is_secure=0;
 else
-  echo "invalid http address";
+  >&2 echo "ERROR: invalid http address";
   exit 1;
 fi
 
@@ -34,11 +33,9 @@ then
     port=80;
   fi
 else
-  echo "invalid http address";
+  >&2 echo "ERROR: invalid http address";
   exit 1;
 fi
-
-#echo -en "SUMMARY\nfull address: $full_address\nis secure: $is_secure\naddress: $address\nport: $port\n"
 
 if [ $is_secure -eq 0 ];
 then
