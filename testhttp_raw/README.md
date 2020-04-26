@@ -4,7 +4,6 @@ To compile the code, use ``` make ``` in the source folder.
 
 ---
 # testhttp - bash script
----
 
 ``` ./testhttp <cookies_file< <test_address>```
 
@@ -22,7 +21,6 @@ Any errors in memory allocation and invalid arguments are reported with messages
 ---
 # testhttp_raw - c program
 _Works only with http sites_
----
 
 Run ``` ./testhttp_raw <connection_address> <cookies_file< <test_address>```
 
